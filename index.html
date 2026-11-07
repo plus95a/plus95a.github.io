@@ -335,6 +335,9 @@ const KEY="qudrat_v1";
 let S={mistakes:{},saved:{},answered:0,correct:0,sets:{}};
 try{const r=localStorage.getItem(KEY);if(r)S=Object.assign(S,JSON.parse(r))}catch(e){}
 S.saved=S.saved||{};
+// سجل آخر نتيجة لكل سؤال: true صحيح، false خطأ
+if(!S.res){S.res={};Object.values(S.sets||{}).forEach(st=>(st.seen||[]).forEach(id=>{S.res[id]=!S.mistakes[id]}));Object.keys(S.mistakes).forEach(id=>S.res[id]=false)}
+const RS=()=>{const v=Object.keys(S.res).filter(byIdSafe).map(id=>S.res[id]);return {answered:v.length,correct:v.filter(Boolean).length}};
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}};
 
 const L=["أ","ب","ج","د"];
@@ -342,6 +345,7 @@ const AR=n=>String(n).replace(/\d/g,d=>"٠١٢٣٤٥٦٧٨٩"[d]);
 let CUSTOM=null; // أسئلة من لوحة الإدارة (قاعدة البيانات)
 const Q=()=>CUSTOM&&CUSTOM.length?DATA.questions.concat(CUSTOM):DATA.questions;
 const byId=id=>Q().find(q=>q.id===id);
+function byIdSafe(id){try{return !!byId(id)}catch(e){return true}}
 const qsOf=set=>Q().filter(q=>q.set===set);
 const allSets=()=>[...DATA.verbal.sections.map(s=>({...s,track:"verbal",kind:"قسم"})),...DATA.verbal.banks.map(s=>({...s,track:"verbal",kind:"بنك"})),...DATA.quant.lessons.map(s=>({...s,track:"quant",kind:"درس"})),...DATA.quant.sections.map(s=>({...s,track:"quant",kind:"قسم"})),...DATA.quant.banks.map(s=>({...s,track:"quant",kind:"بنك"}))];
 const setName=id=>(allSets().find(s=>s.id===id)||{}).name||"";
@@ -365,7 +369,7 @@ function trackStats(t){
 
 /* ============ الصفحات ============ */
 function home(){
-  const acc=S.answered?Math.round(S.correct/S.answered*100):0, mc=Object.keys(S.mistakes).length;
+  const R=RS(),acc=R.answered?Math.round(R.correct/R.answered*100):0, mc=Object.keys(S.mistakes).length;
   const v=trackStats("verbal"),q=trackStats("quant");
   main.innerHTML=`<div class="view">
   <section class="hero">
@@ -382,8 +386,8 @@ function home(){
     </div>
   </section>
   <section class="stats" aria-label="إحصائياتك">
-    <div><div class="label">أسئلة محلولة</div><div class="v">${AR(S.answered)}</div></div>
-    <div><div class="label">إجابات صحيحة</div><div class="v">${AR(S.correct)}</div></div>
+    <div><div class="label">أسئلة محلولة</div><div class="v">${AR(R.answered)}</div></div>
+    <div><div class="label">إجابات صحيحة</div><div class="v">${AR(R.correct)}</div></div>
     <div><div class="label">نسبة الدقة</div><div class="v">${AR(acc)}٪</div></div>
     <div><div class="label">أخطاء محفوظة</div><div class="v" style="color:var(--bad)">${AR(mc)}</div></div>
   </section>
@@ -653,7 +657,7 @@ function renderQuiz(){
       <div class="qtext">${esc(q.q)}</div>
       <div class="opts">${q.opts.map((o,k)=>{let c="";if(done){if(k===q.a)c="correct";else if(k===picked)c="wrong"}
         return `<button class="opt ${c}" data-opt="${k}" ${done?"disabled":""}><span class="bub">${L[k]}</span><span>${esc(o)}</span></button>`}).join("")}</div>
-      ${done?`<div class="feedback ${picked===q.a?"ok":"no"}"><b>${picked===q.a?(z.mode==="mist"?"إجابة صحيحة، حُذف من أخطائك":"إجابة صحيحة"):"إجابة خاطئة، حُفظ في أخطائك"}</b><span>${esc(q.ex||"")}</span></div>`:""}
+      ${done?`<div class="feedback ${picked===q.a?"ok":"no"}"><b>${picked===q.a?(z.prevMist&&z.prevMist[z.i]?"إجابة صحيحة، حُذف من أخطائك":"إجابة صحيحة"):"إجابة خاطئة، حُفظ في أخطائك"}</b><span>${esc(q.ex||"")}</span></div>`:""}
     </div>
     <div class="qactions"><span></span>
       <button class="btn btn-ink" data-act="next" ${done?"":"disabled"}>${z.i===z.list.length-1?"عرض النتيجة":"السؤال التالي"}</button></div>
@@ -661,9 +665,10 @@ function renderQuiz(){
 }
 function answer(k){
   const z=quiz,q=z.list[z.i];if(z.ans[z.i]!=null)return;
-  z.ans[z.i]=k;S.answered++;
+  (z.prevMist=z.prevMist||[])[z.i]=!!S.mistakes[q.id];
+  z.ans[z.i]=k;S.answered++;S.res[q.id]=(k===q.a);
   const st=S.sets[q.set]||(S.sets[q.set]={seen:[]});st.seen=st.seen||[];if(!st.seen.includes(q.id))st.seen.push(q.id);
-  if(k===q.a){S.correct++;if(z.mode==="mist")delete S.mistakes[q.id]}
+  if(k===q.a){S.correct++;delete S.mistakes[q.id]}
   else{const m=S.mistakes[q.id]||{n:0};m.n++;m.t=Date.now();S.mistakes[q.id]=m}
   save();updateBadge();renderQuiz();
 }
@@ -726,7 +731,7 @@ document.addEventListener("click",e=>{
   if(a==="retrywrong"){const w=quiz.list.filter((q,k)=>quiz.ans[k]!==q.a);startQuiz(w,quiz.title+" · الأخطاء","mist",null,quiz.back)}
   if(a==="reset"){confirmReset=true;mistakes()}
   if(a==="noreset"){confirmReset=false;mistakes()}
-  if(a==="doreset"){S={mistakes:{},saved:{},answered:0,correct:0,sets:{}};save();confirmReset=false;updateBadge();mistakes()}
+  if(a==="doreset"){S={mistakes:{},saved:{},answered:0,correct:0,sets:{},res:{}};save();confirmReset=false;updateBadge();mistakes()}
 });
 document.addEventListener("submit",e=>{if(e.target.id==="admForm"){e.preventDefault();adminSubmit()}});
 document.addEventListener("change",e=>{
